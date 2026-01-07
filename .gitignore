@@ -1,0 +1,5 @@
+node_modules
+.env
+src/config/oauth2cred.json
+src/services/gam/oauth2cred.json
+src/services/gam/config.json
