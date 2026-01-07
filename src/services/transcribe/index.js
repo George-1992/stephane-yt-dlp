@@ -5,7 +5,8 @@ const path = require('path');
 const { promisify } = require('util');
 const { pipeline } = require('stream');
 const pipelineAsync = promisify(pipeline);
-const youtubedl = require('youtube-dl-exec');
+// const youtubedl = require('youtube-dl-exec');
+const youtubedl = () => { return null }
 const transcribeAudio = require('@/services/whisper');
 const {
     getSubtitles,
@@ -182,7 +183,10 @@ const transcribeYouTube2 = async (youtubeUrl, options = {}) => {
         // First, try youtube-caption-extractor (uses different API, might bypass rate limits)
         try {
             console.log(`Trying youtube-caption-extractor for language: ${lang}...`);
-            const captions = await getSubtitles({ videoID: videoId, lang: lang });
+            const captions = await getSubtitles({
+                videoID: videoId, lang: lang,
+                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+            });
 
             if (captions && captions.length > 0) {
                 console.log(`Caption extractor success: ${captions.length} segments`);
