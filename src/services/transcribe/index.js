@@ -5,8 +5,7 @@ const path = require('path');
 const { promisify } = require('util');
 const { pipeline } = require('stream');
 const pipelineAsync = promisify(pipeline);
-// const youtubedl = require('youtube-dl-exec');
-const youtubedl = () => { return null }
+const youtubedl = require('youtube-dl-exec');
 const transcribeAudio = require('@/services/whisper');
 const {
     getSubtitles,
