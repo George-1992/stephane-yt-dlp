@@ -224,14 +224,15 @@ const transcribeYouTube2 = async (youtubeUrl, options = {}) => {
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 if (attempt > 1) {
-                    const delay = attempt * 2000; // 2s, 4s, 6s delays
+                    const delay = attempt * 2000;
                     console.log(`Retry attempt ${attempt}/${maxRetries} after ${delay}ms delay...`);
                     await new Promise(resolve => setTimeout(resolve, delay));
                 }
 
                 console.log(`Downloading subtitles with yt-dlp (attempt ${attempt})...`);
 
-                await youtubedl(youtubeUrl, {
+                // Build options with cookie support based on attempt
+                const ytdlOptions = {
                     skipDownload: true,
                     writeAutoSub: true,
                     writeSub: true,
@@ -239,12 +240,25 @@ const transcribeYouTube2 = async (youtubeUrl, options = {}) => {
                     subFormat: 'vtt',
                     output: path.join(tempDir, `${videoId}.%(ext)s`),
                     noWarnings: true,
-                    // Add headers to potentially avoid rate limiting
-                    addHeader: [
-                        'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    ],
-                    sleepSubtitles: 1, // Sleep between subtitle downloads
-                });
+                    sleepSubtitles: 1,
+                };
+
+                // Try different strategies on different attempts
+                if (attempt === 1) {
+                    // First attempt: Try Chrome cookies
+                    console.log('Using Chrome browser cookies...');
+                    ytdlOptions.cookiesFromBrowser = 'chrome';
+                } else if (attempt === 2) {
+                    // Second attempt: Try Firefox cookies
+                    console.log('Using Firefox browser cookies...');
+                    ytdlOptions.cookiesFromBrowser = 'firefox';
+                } else {
+                    // Third attempt: Use Android client (no cookies)
+                    console.log('Using Android player client...');
+                    ytdlOptions.extractor_args = 'youtube:player_client=android';
+                }
+
+                await youtubedl(youtubeUrl, ytdlOptions);
 
                 // Check which subtitle file was created
                 const possibleFiles = [
@@ -300,8 +314,8 @@ const transcribeYouTube2 = async (youtubeUrl, options = {}) => {
                 lastError = ytdlpError;
                 console.error(`yt-dlp attempt ${attempt} failed:`, ytdlpError.message);
 
-                // If it's a 429 error and we have retries left, continue
-                if (ytdlpError.message.includes('429') && attempt < maxRetries) {
+                // If it's a bot detection or rate limit error and we have retries left, continue
+                if ((ytdlpError.message.includes('bot') || ytdlpError.message.includes('429')) && attempt < maxRetries) {
                     continue;
                 }
 
@@ -313,6 +327,16 @@ const transcribeYouTube2 = async (youtubeUrl, options = {}) => {
         }
 
         // If we got here, all methods failed
+        if (lastError && lastError.message.includes('bot')) {
+            throw new Error(
+                'YouTube bot detection - Please fix:\n' +
+                '1. Open Chrome/Firefox and visit youtube.com (sign in if needed)\n' +
+                '2. Make sure browser cookies are accessible\n' +
+                '3. Try again in a few minutes\n' +
+                'Original error: ' + lastError.message
+            );
+        }
+
         throw new Error(lastError?.message || 'All subtitle extraction methods failed');
 
     } catch (error) {
