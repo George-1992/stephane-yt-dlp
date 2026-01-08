@@ -168,188 +168,47 @@ const transcribeYouTube2 = async (youtubeUrl, options = {}) => {
         data: null
     }
 
-    const tempDir = path.join(process.cwd(), 'temp');
-    let subtitlePath = null;
-
     try {
-        // Create temp directory if it doesn't exist
-        await mkdir(tempDir, { recursive: true });
-
         const videoId = ytdl.getVideoID(youtubeUrl);
-        console.log('Attempting to fetch transcript for videoId:', videoId);
+        console.log('Fetching transcript for videoId:', videoId);
 
         const lang = options.lang || 'en';
 
-        // First, try youtube-caption-extractor (uses different API, might bypass rate limits)
-        try {
-            console.log(`Trying youtube-caption-extractor for language: ${lang}...`);
-            const captions = await getSubtitles({
-                videoID: videoId, lang: lang,
-                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
-            });
-
-            if (captions && captions.length > 0) {
-                console.log(`Caption extractor success: ${captions.length} segments`);
-
-                const fullText = captions.map(cap => cap.text).join(' ');
-
-                resObj.success = true;
-                resObj.message = 'Transcript fetched successfully via caption extractor';
-                resObj.data = {
-                    transcript: captions.map(cap => ({
-                        text: cap.text,
-                        start: cap.start,
-                        startSeconds: parseFloat(cap.start),
-                        duration: parseFloat(cap.dur),
-                        endSeconds: parseFloat(cap.start) + parseFloat(cap.dur)
-                    })),
-                    fullText: fullText,
-                    segmentCount: captions.length,
-                    language: lang
-                };
-
-                return resObj;
-            }
-        } catch (captionError) {
-            console.log(`Caption extractor failed: ${captionError.message}`);
-            console.log('Falling back to yt-dlp...');
-        }
-
-        // Fallback to yt-dlp with retry logic and rate limit handling
-        subtitlePath = path.join(tempDir, `${videoId}.${lang}.vtt`);
-
-        const maxRetries = 3;
-        let lastError = null;
-
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                if (attempt > 1) {
-                    const delay = attempt * 1500;
-                    console.log(`Retry attempt ${attempt}/${maxRetries} after ${delay}ms delay...`);
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                }
-
-                console.log(`Downloading subtitles with yt-dlp (attempt ${attempt})...`);
-
-                // Build yt-dlp options - try different strategies per attempt
-                const ytdlOptions = {
-                    skipDownload: true,
-                    writeAutoSub: true,
-                    writeSub: true,
-                    subLang: lang,
-                    subFormat: 'vtt',
-                    output: path.join(tempDir, `${videoId}.%(ext)s`),
-                    noWarnings: true,
-                };
-
-                // Strategy 1: Android client (works without cookies, most reliable)
-                if (attempt === 1) {
-                    console.log('Strategy: Using Android player client (no cookies needed)...');
-                    ytdlOptions.extractorArgs = 'youtube:player_client=android';
-                }
-                // Strategy 2: Web client with different user agent
-                else if (attempt === 2) {
-                    console.log('Strategy: Using web client with mobile user agent...');
-                    ytdlOptions.extractorArgs = 'youtube:player_client=web';
-                    ytdlOptions.userAgent = 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 Mobile Safari/537.36';
-                }
-                // Strategy 3: iOS client
-                else if (attempt === 3) {
-                    console.log('Strategy: Using iOS player client...');
-                    ytdlOptions.extractorArgs = 'youtube:player_client=ios';
-                }
-
-                await youtubedl(youtubeUrl, ytdlOptions);
-
-                // Check which subtitle file was created
-                const possibleFiles = [
-                    path.join(tempDir, `${videoId}.${lang}.vtt`),
-                    path.join(tempDir, `${videoId}.vtt`),
-                ];
-
-                let actualSubPath = null;
-                for (const file of possibleFiles) {
-                    if (fs.existsSync(file)) {
-                        actualSubPath = file;
-                        break;
-                    }
-                }
-
-                if (!actualSubPath) {
-                    throw new Error('Subtitle file not found after download');
-                }
-
-                console.log('Subtitle file downloaded:', actualSubPath);
-
-                // Read and parse the VTT file
-                const vttContent = fs.readFileSync(actualSubPath, 'utf8');
-                const transcriptSegments = parseVTT(vttContent);
-
-                // Clean up subtitle file
-                try {
-                    fs.unlinkSync(actualSubPath);
-                } catch (e) {
-                    // Ignore cleanup errors
-                }
-
-                if (!transcriptSegments || transcriptSegments.length === 0) {
-                    throw new Error('Subtitles downloaded but parsing failed');
-                }
-
-                console.log(`Transcript parsed: ${transcriptSegments.length} segments`);
-
-                const fullText = transcriptSegments.map(seg => seg.text).join(' ');
-
-                resObj.success = true;
-                resObj.message = 'Transcript fetched successfully via yt-dlp';
-                resObj.data = {
-                    transcript: transcriptSegments,
-                    fullText: fullText,
-                    segmentCount: transcriptSegments.length,
-                    language: lang
-                };
-
-                return resObj;
-
-            } catch (ytdlpError) {
-                lastError = ytdlpError;
-                console.error(`yt-dlp attempt ${attempt} failed:`, ytdlpError.message);
-
-                // Continue to next strategy if not the last attempt
-                if (attempt < maxRetries) {
-                    continue;
-                }
-            }
-        }
-
-        // If we got here, all methods failed - provide helpful error message
-        const errorMsg = lastError?.message || 'All subtitle extraction methods failed';
+        // Use youtube-caption-extractor - it works without cookies
+        console.log(`Fetching captions with youtube-caption-extractor (lang: ${lang})...`);
         
-        if (errorMsg.includes('bot') || errorMsg.includes('Sign in')) {
-            throw new Error(
-                'YouTube requires authentication. The video may have age restrictions or bot detection.\n' +
-                'This typically happens when:\n' +
-                '1. Video has age restrictions\n' +
-                '2. YouTube detects automated access\n' +
-                '3. IP is rate limited\n' +
-                'Try a different video or wait a few minutes.'
-            );
-        }
-        
-        if (errorMsg.includes('no such option')) {
-            throw new Error(
-                'yt-dlp version is outdated. Please update:\n' +
-                'Run: pip3 install --upgrade yt-dlp\n' +
-                'Or: npm install -g yt-dlp-wrap@latest'
-            );
+        const captions = await getSubtitles({ videoID: videoId, lang: lang });
+
+        if (!captions || captions.length === 0) {
+            resObj.message = `No ${lang} captions found. Video may not have captions or language '${lang}' may not be available.`;
+            return resObj;
         }
 
-        throw new Error(errorMsg);
+        console.log(`Successfully fetched ${captions.length} caption segments`);
+
+        const fullText = captions.map(cap => cap.text).join(' ');
+
+        resObj.success = true;
+        resObj.message = 'Transcript fetched successfully';
+        resObj.data = {
+            transcript: captions.map(cap => ({
+                text: cap.text,
+                start: cap.start,
+                startSeconds: parseFloat(cap.start),
+                duration: parseFloat(cap.dur),
+                endSeconds: parseFloat(cap.start) + parseFloat(cap.dur)
+            })),
+            fullText: fullText,
+            segmentCount: captions.length,
+            language: lang
+        };
+
+        return resObj;
 
     } catch (error) {
         console.error('Transcription error:', error);
         resObj.success = false;
-        resObj.message = error.message || 'Transcription failed - video may not have captions/transcripts available';
+        resObj.message = error.message || 'Failed to fetch captions. Video may not have captions enabled.';
         return resObj;
     }
 }
