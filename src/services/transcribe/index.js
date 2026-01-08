@@ -224,14 +224,14 @@ const transcribeYouTube2 = async (youtubeUrl, options = {}) => {
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 if (attempt > 1) {
-                    const delay = attempt * 2000;
+                    const delay = attempt * 1500;
                     console.log(`Retry attempt ${attempt}/${maxRetries} after ${delay}ms delay...`);
                     await new Promise(resolve => setTimeout(resolve, delay));
                 }
 
                 console.log(`Downloading subtitles with yt-dlp (attempt ${attempt})...`);
 
-                // Build options with cookie support based on attempt
+                // Build yt-dlp options - try different strategies per attempt
                 const ytdlOptions = {
                     skipDownload: true,
                     writeAutoSub: true,
@@ -240,22 +240,23 @@ const transcribeYouTube2 = async (youtubeUrl, options = {}) => {
                     subFormat: 'vtt',
                     output: path.join(tempDir, `${videoId}.%(ext)s`),
                     noWarnings: true,
-                    sleepSubtitles: 1,
                 };
 
-                // Try different strategies on different attempts
+                // Strategy 1: Android client (works without cookies, most reliable)
                 if (attempt === 1) {
-                    // First attempt: Try Chrome cookies
-                    console.log('Using Chrome browser cookies...');
-                    ytdlOptions.cookiesFromBrowser = 'chrome';
-                } else if (attempt === 2) {
-                    // Second attempt: Try Firefox cookies
-                    console.log('Using Firefox browser cookies...');
-                    ytdlOptions.cookiesFromBrowser = 'firefox';
-                } else {
-                    // Third attempt: Use Android client (no cookies)
-                    console.log('Using Android player client...');
-                    ytdlOptions.extractor_args = 'youtube:player_client=android';
+                    console.log('Strategy: Using Android player client (no cookies needed)...');
+                    ytdlOptions.extractorArgs = 'youtube:player_client=android';
+                }
+                // Strategy 2: Web client with different user agent
+                else if (attempt === 2) {
+                    console.log('Strategy: Using web client with mobile user agent...');
+                    ytdlOptions.extractorArgs = 'youtube:player_client=web';
+                    ytdlOptions.userAgent = 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 Mobile Safari/537.36';
+                }
+                // Strategy 3: iOS client
+                else if (attempt === 3) {
+                    console.log('Strategy: Using iOS player client...');
+                    ytdlOptions.extractorArgs = 'youtube:player_client=ios';
                 }
 
                 await youtubedl(youtubeUrl, ytdlOptions);
@@ -314,30 +315,36 @@ const transcribeYouTube2 = async (youtubeUrl, options = {}) => {
                 lastError = ytdlpError;
                 console.error(`yt-dlp attempt ${attempt} failed:`, ytdlpError.message);
 
-                // If it's a bot detection or rate limit error and we have retries left, continue
-                if ((ytdlpError.message.includes('bot') || ytdlpError.message.includes('429')) && attempt < maxRetries) {
+                // Continue to next strategy if not the last attempt
+                if (attempt < maxRetries) {
                     continue;
-                }
-
-                // For other errors or last attempt, break
-                if (attempt === maxRetries) {
-                    break;
                 }
             }
         }
 
-        // If we got here, all methods failed
-        if (lastError && lastError.message.includes('bot')) {
+        // If we got here, all methods failed - provide helpful error message
+        const errorMsg = lastError?.message || 'All subtitle extraction methods failed';
+        
+        if (errorMsg.includes('bot') || errorMsg.includes('Sign in')) {
             throw new Error(
-                'YouTube bot detection - Please fix:\n' +
-                '1. Open Chrome/Firefox and visit youtube.com (sign in if needed)\n' +
-                '2. Make sure browser cookies are accessible\n' +
-                '3. Try again in a few minutes\n' +
-                'Original error: ' + lastError.message
+                'YouTube requires authentication. The video may have age restrictions or bot detection.\n' +
+                'This typically happens when:\n' +
+                '1. Video has age restrictions\n' +
+                '2. YouTube detects automated access\n' +
+                '3. IP is rate limited\n' +
+                'Try a different video or wait a few minutes.'
+            );
+        }
+        
+        if (errorMsg.includes('no such option')) {
+            throw new Error(
+                'yt-dlp version is outdated. Please update:\n' +
+                'Run: pip3 install --upgrade yt-dlp\n' +
+                'Or: npm install -g yt-dlp-wrap@latest'
             );
         }
 
-        throw new Error(lastError?.message || 'All subtitle extraction methods failed');
+        throw new Error(errorMsg);
 
     } catch (error) {
         console.error('Transcription error:', error);
